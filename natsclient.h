@@ -16,7 +16,7 @@ namespace Nats
     #define DEBUG(x) do { if (_debug_mode) { qDebug() << x; } } while (0)
 
     //! main callback message
-    using MessageCallback = std::function<void(QString &&message, QString &&inbox, QString &&subject)>;
+    using MessageCallback = std::function<void(QByteArray &&message, QString &&inbox, QString &&subject)>;
     using ConnectCallback = std::function<void()>;
 
     //!
@@ -51,7 +51,7 @@ namespace Nats
         explicit Subscription(QObject *parent = nullptr): QObject(parent) {}
 
         QString subject;
-        QString message;
+        QByteArray message;
         QString inbox;
         uint64_t ssid = 0;
 
@@ -74,8 +74,8 @@ namespace Nats
         //! \param subject
         //! \param message
         //! publish given message with subject
-        void publish(const QString &subject, const QString &message, const QString &inbox);
-        void publish(const QString &subject, const QString &message = "");
+        void publish(const QString &subject, const QByteArray &message, const QString &inbox);
+        void publish(const QString &subject, const QByteArray &message = "");
 
         //!
         //! \brief subscribe
@@ -118,7 +118,7 @@ namespace Nats
         //! \param message
         //! \return
         //! make request using given subject and optional message
-        uint64_t request(const QString subject, const QString message, Nats::MessageCallback callback);
+        uint64_t request(const QString subject, const QByteArray message, Nats::MessageCallback callback);
         uint64_t request(const QString subject, Nats::MessageCallback callback);
 
     signals:
@@ -426,14 +426,14 @@ namespace Nats
         return QJsonDocument::fromJson(message.mid(5)).object();
     }
 
-    inline void Client::publish(const QString &subject, const QString &message)
+    inline void Client::publish(const QString &subject, const QByteArray &message)
     {
         publish(subject, message, "");
     }
 
-    inline void Client::publish(const QString &subject, const QString &message, const QString &inbox)
+    inline void Client::publish(const QString &subject, const QByteArray &message, const QString &inbox)
     {
-        QString body = QStringLiteral("PUB ") % subject % " " % inbox % (inbox.isEmpty() ? "" : " ") % QString::number(message.toUtf8().length()) % CLRF % message % CLRF;
+        QString body = QStringLiteral("PUB ") % subject % " " % inbox % (inbox.isEmpty() ? "" : " ") % QString::number(message.length()) % CLRF % message % CLRF;
 
         DEBUG("published:" << body);
 
@@ -462,7 +462,7 @@ namespace Nats
     {
         auto subscription = new Subscription;
 
-        subscription->ssid = subscribe(subject, "", [subscription](const QString &message, const QString &inbox, const QString &subject)
+        subscription->ssid = subscribe(subject, "", [subscription](const QByteArray &message, const QString &inbox, const QString &subject)
         {
             subscription->message = message;
             subscription->subject = subject;
@@ -488,7 +488,7 @@ namespace Nats
         return request(subject, "", callback);
     }
 
-    inline uint64_t Client::request(const QString subject, const QString message, MessageCallback callback)
+    inline uint64_t Client::request(const QString subject, const QByteArray message, MessageCallback callback)
     {
         QString inbox = QUuid::createUuid().toString();
         uint64_t ssid = subscribe(inbox, callback);
@@ -614,7 +614,7 @@ namespace Nats
             sid = parts[2].toString();
             uint64_t ssid = sid.toULong();
 
-            QString message(buffer.mid(current_pos, message_len));
+            QByteArray message(buffer.mid(current_pos, message_len));
             last_pos = current_pos + message_len + CLRF.length();
 
             DEBUG("message:" << message);
