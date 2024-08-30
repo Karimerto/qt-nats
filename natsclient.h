@@ -26,7 +26,7 @@ namespace Nats
     {
         bool verbose = false;
         bool pedantic = false;
-        bool ssl_required = false;
+        bool tls_required = false;
         bool ssl = false;
         bool ssl_verify = true;
         QString ssl_key;
@@ -104,6 +104,14 @@ namespace Nats
         //! \return
         //! return subscription class holding result for signal/slot version
         Subscription *subscribe(const QString &subject);
+
+        //!
+        //! \brief subscribe
+        //! \param subject
+        //! \param queue
+        //! \return
+        //! return subscription class holding result for signal/slot version
+        Subscription *subscribe(const QString &subject, const QString &queue);
 
         //!
         //! \brief unsubscribe
@@ -289,10 +297,10 @@ namespace Nats
             QByteArray info_message = m_socket.readAll();
 
             QJsonObject json = parse_info(info_message);
-            bool ssl_required = json.value(QStringLiteral("ssl_required")).toBool();
+            bool tls_required = json.value(QStringLiteral("tls_required")).toBool();
 
             // if client or server wants ssl start encryption
-            if(options.ssl || options.ssl_required || ssl_required)
+            if(options.ssl || options.tls_required || tls_required)
             {
                 DEBUG("starting SSL/TLS encryption");
 
@@ -363,10 +371,10 @@ namespace Nats
         auto info_message = m_socket.readAll();
 
         QJsonObject json = parse_info(info_message);
-        bool ssl_required = json.value(QStringLiteral("ssl_required")).toBool();
+        bool tls_required = json.value(QStringLiteral("tls_required")).toBool();
 
         // if client or server wants ssl start encryption
-        if(options.ssl || options.ssl_required || ssl_required)
+        if(options.ssl || options.tls_required || tls_required)
         {
             DEBUG("starting SSL/TLS encryption");
 
@@ -460,9 +468,14 @@ namespace Nats
 
     inline Subscription *Client::subscribe(const QString &subject)
     {
+        return subscribe(subject, "");
+    }
+
+    inline Subscription *Client::subscribe(const QString &subject, const QString &queue)
+    {
         auto subscription = new Subscription;
 
-        subscription->ssid = subscribe(subject, "", [subscription](const QByteArray &message, const QString &inbox, const QString &subject)
+        subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &inbox, const QString &subject)
         {
             subscription->message = message;
             subscription->subject = subject;
