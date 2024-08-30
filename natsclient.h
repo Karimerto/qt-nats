@@ -219,10 +219,10 @@ namespace Nats
         void set_listeners();
 
         //!
-        //! \brief process_inboud
+        //! \brief process_inbound
         //! \param buffer
         //! process messages from buffer
-        bool process_inboud(const QByteArray &buffer);
+        bool process_inbound(const QByteArray &buffer);
     };
 
     inline Client::Client(QObject *parent) : QObject(parent)
@@ -513,7 +513,7 @@ namespace Nats
             if(clrf_pos != -1)
             {
                 QByteArray msg_buffer = m_buffer.left(clrf_pos + CLRF.length());
-                process_inboud(msg_buffer);
+                process_inbound(msg_buffer);
             }
         });
     }
@@ -521,7 +521,7 @@ namespace Nats
     // parse incoming messages, see http://nats.io/documentation/internals/nats-protocol
     // QStringView is used so we don't do unnecessary allocations
     // TODO: error on invalid message
-    inline bool Client::process_inboud(const QByteArray &buffer)
+    inline bool Client::process_inbound(const QByteArray &buffer)
     {
         DEBUG("handle message:" << buffer);
 
