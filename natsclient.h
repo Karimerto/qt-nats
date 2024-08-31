@@ -48,9 +48,7 @@ namespace Nats
     static const QByteArray makeHeader(const Headers &headers)
     {
         if(headers.size() == 0)
-        {
             return QByteArray();
-        }
 
         // Start with the header line
         QByteArray result(hdrLine);
@@ -89,9 +87,7 @@ namespace Nats
             int idx = line.indexOf(':');
             // If there is no colon, skip this line
             if(idx < 1)
-            {
                 continue;
-            }
 
             // Parse key and value
             QString key(line.left(idx));
@@ -100,9 +96,7 @@ namespace Nats
 
             // Skip empty values as well
             if(value.isEmpty())
-            {
                 continue;
-            }
             headers.insert(key, value);
         }
 
@@ -118,9 +112,7 @@ namespace Nats
             }
             headers.insert(statusHdr, status);
             if(!description.isEmpty())
-            {
                 headers.insert(descrHdr, description);
-            }
         }
 
         return headers;
@@ -164,7 +156,7 @@ namespace Nats
         QByteArray message;
         QString reply;
         Headers headers;
-        uint64_t ssid = 0;
+        qulonglong ssid = 0;
 
     signals:
         void received();
@@ -202,7 +194,7 @@ namespace Nats
         //! \return subscription id
         //! subscribe to given subject
         //! when message is received, callback is fired
-        uint64_t subscribe(const QString &subject, Nats::MessageCallback callback);
+        qulonglong subscribe(const QString &subject, Nats::MessageCallback callback);
 
         //!
         //! \brief subscribe
@@ -214,7 +206,7 @@ namespace Nats
         //! subscribe to given subject and queue
         //! when message is received, callback is fired
         //! each message will be delivered to only one subscriber per queue group
-        uint64_t subscribe(const QString &subject, const QString &queue, Nats::MessageCallback callback);
+        qulonglong subscribe(const QString &subject, const QString &queue, Nats::MessageCallback callback);
 
         //!
         //! \brief subscribe
@@ -236,7 +228,7 @@ namespace Nats
         //! \param ssid
         //! \param max_messages
         //!
-        void unsubscribe(uint64_t ssid, int max_messages = 0);
+        void unsubscribe(qulonglong ssid, int max_messages = 0);
 
         //!
         //! \brief request
@@ -244,10 +236,10 @@ namespace Nats
         //! \param message
         //! \return
         //! make request using given subject and optional message
-        uint64_t request(const QString subject, const QByteArray message, Nats::MessageCallback callback);
-        uint64_t request(const QString subject, Nats::MessageCallback callback);
-        uint64_t request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback);
-        uint64_t request(const QString subject, const Headers headers, Nats::MessageCallback callback);
+        qulonglong request(const QString subject, const QByteArray message, Nats::MessageCallback callback);
+        qulonglong request(const QString subject, Nats::MessageCallback callback);
+        qulonglong request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback);
+        qulonglong request(const QString subject, const Headers headers, Nats::MessageCallback callback);
 
     signals:
 
@@ -306,7 +298,7 @@ namespace Nats
         //!
         //! \brief m_ssid
         //! subscribtion id holder
-        uint64_t m_ssid = 0;
+        qulonglong m_ssid = 0;
 
         //!
         //! \brief m_socket
@@ -321,7 +313,7 @@ namespace Nats
         //!
         //! \brief m_callbacks
         //! subscription callbacks
-        QHash<uint64_t, MessageCallback> m_callbacks;
+        QHash<qulonglong, MessageCallback> m_callbacks;
 
         //!
         //! \brief m_info
@@ -542,27 +534,19 @@ namespace Nats
 
         // Set username, if any
         if (!options.user.isEmpty())
-        {
             info.insert("user", options.user);
-        }
 
         // Set password, if any
         if (!options.user.isEmpty())
-        {
             info.insert("user", options.user);
-        }
 
         // Set authorization token, if any
         if (!options.user.isEmpty())
-        {
             info.insert("auth_token", options.token);
-        }
 
         // If headers are enabled, also set no_responders
         if (options.headers)
-        {
             info.insert("no_responders", true);
-        }
 
         // Compose CONNECT message
         QByteArray message("CONNECT ");
@@ -590,54 +574,59 @@ namespace Nats
 
     inline void Client::publish(const QString &subject, const QByteArray &message, const QString &reply)
     {
-        QString body = QStringLiteral("PUB ") % subject % " " % reply % (reply.isEmpty() ? "" : " ") % QString::number(message.length()) % CRLF % message % CRLF;
+        QByteArray body = QByteArrayLiteral("PUB ") + subject.toUtf8() + \
+            " " + reply.toUtf8() + (reply.isEmpty() ? "" : " ") + \
+            QByteArray::number(message.length()) + CRLF + message + CRLF;
 
         DEBUG("published:" << body);
 
-        m_socket.write(body.toUtf8());
+        m_socket.write(body);
     }
 
     inline void Client::publish(const QString &subject, const Headers &headers, const QByteArray &message, const QString &reply)
     {
         // Send either PUB or HPUB, depending on header(s)
-        QString body;
+        QByteArray body;
 
         // Convert headers to string
         QByteArray hdr = makeHeader(headers);
         if (hdr.length() > 0)
         {
-            body = QStringLiteral("HPUB ") % subject % " " % \
-            reply % (reply.isEmpty() ? "" : " ") % \
-            QString::number(hdr.length()) % " " % \
-            QString::number(hdr.length() + message.length()) % CRLF % hdr;
+            body = QByteArrayLiteral("HPUB ") + subject.toUtf8() + " " + \
+            reply.toUtf8() + (reply.isEmpty() ? "" : " ") + \
+            QByteArray::number(hdr.length()) + " " + \
+            QByteArray::number(hdr.length() + message.length()) + CRLF + hdr;
         }
         else
         {
-            body = QStringLiteral("PUB ") % subject % " " % \
-            reply % (reply.isEmpty() ? "" : " ") % \
-            QString::number(message.length()) % CRLF;
+            body = QByteArrayLiteral("PUB ") + subject.toUtf8() + " " + \
+            reply.toUtf8() + (reply.isEmpty() ? "" : " ") + \
+            QByteArray::number(message.length()) + CRLF;
         }
 
         // Append message
-        body += message % CRLF;
+        body += message + CRLF;
 
         DEBUG("published:" << body);
 
-        m_socket.write(body.toUtf8());
+        m_socket.write(body);
     }
 
-    inline uint64_t Client::subscribe(const QString &subject, MessageCallback callback)
+    inline qulonglong Client::subscribe(const QString &subject, MessageCallback callback)
     {
         return subscribe(subject, "", callback);
     }
 
-    inline uint64_t Client::subscribe(const QString &subject, const QString &queue, MessageCallback callback)
+    inline qulonglong Client::subscribe(const QString &subject, const QString &queue, MessageCallback callback)
     {
         m_callbacks[++m_ssid] = callback;
 
-        QString message = QStringLiteral("SUB ") % subject % " " % queue % (queue.isEmpty() ? "" : " ") % QString::number(m_ssid) % CRLF;
+        QByteArray message = QByteArrayLiteral("SUB ") + \
+            subject.toUtf8() + " " + \
+            queue.toUtf8() + (queue.isEmpty() ? "" : " ") + \
+            QByteArray::number(m_ssid) + CRLF;
 
-        m_socket.write(message.toUtf8());
+        m_socket.write(message);
 
         DEBUG("subscribed:" << message);
 
@@ -666,39 +655,41 @@ namespace Nats
         return subscription;
     }
 
-    inline void Client::unsubscribe(uint64_t ssid, int max_messages)
+    inline void Client::unsubscribe(qulonglong ssid, int max_messages)
     {
-        QString message = QStringLiteral("UNSUB ") % QString::number(ssid) % (max_messages > 0 ? QString(" %1").arg(max_messages) : "") % CRLF;
+        QByteArray message = QByteArrayLiteral("UNSUB ") + \
+            QByteArray::number(ssid) + \
+            (max_messages > 0 ? QString(" %1").arg(max_messages) : QStringLiteral("")).toUtf8() + CRLF;
 
         DEBUG("unsubscribed:" << message);
 
-        m_socket.write(message.toUtf8());
+        m_socket.write(message);
     }
 
-    inline uint64_t Client::request(const QString subject, MessageCallback callback)
+    inline qulonglong Client::request(const QString subject, MessageCallback callback)
     {
         return request(subject, "", callback);
     }
 
-    inline uint64_t Client::request(const QString subject, const QByteArray message, MessageCallback callback)
+    inline qulonglong Client::request(const QString subject, const QByteArray message, MessageCallback callback)
     {
         QString reply = QUuid::createUuid().toString();
-        uint64_t ssid = subscribe(reply, callback);
+        qulonglong ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
         publish(subject, message, reply);
 
         return ssid;
     }
 
-    inline uint64_t Client::request(const QString subject, const Headers headers, Nats::MessageCallback callback)
+    inline qulonglong Client::request(const QString subject, const Headers headers, Nats::MessageCallback callback)
     {
         return request(subject, "", headers, callback);
     }
 
-    inline uint64_t Client::request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback)
+    inline qulonglong Client::request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback)
     {
         QString reply = QUuid::createUuid().toString();
-        uint64_t ssid = subscribe(reply, callback);
+        qulonglong ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
         publish(subject, headers, message, reply);
 
@@ -751,7 +742,7 @@ namespace Nats
             if(operation.compare(QStringLiteral("PING"), Qt::CaseInsensitive) == 0)
             {
                 DEBUG("sending pong");
-                m_socket.write(QString("PONG" % CRLF).toUtf8());
+                m_socket.write(QByteArrayLiteral("PONG") + CRLF);
                 last_pos = current_pos + CRLF.length();
                 continue;
             }
@@ -855,7 +846,7 @@ namespace Nats
             operation = parts[0].toString();
             subject = parts[1].toString();
             sid = parts[2].toString();
-            uint64_t ssid = sid.toULong();
+            qulonglong ssid = sid.toULong();
             QByteArray message;
             Headers headers;
 
