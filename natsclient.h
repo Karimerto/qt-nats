@@ -148,6 +148,8 @@ namespace Nats
         QString token;
     };
 
+    class Client;
+
     //!
     //! \brief The Subscription class
     //! holds subscription data and emits signal when ready as alternative to callbacks
@@ -156,7 +158,7 @@ namespace Nats
         Q_OBJECT
 
     public:
-        explicit Subscription(QObject *parent = nullptr): QObject(parent) {}
+        explicit Subscription(Client* client, QObject *parent = nullptr): QObject(parent), m_client(client) {}
 
         QString subject;
         QByteArray message;
@@ -166,6 +168,12 @@ namespace Nats
 
     signals:
         void received();
+
+    public slots:
+        void unsubscribe(int max_messages = 0);
+
+    private:
+        Client *m_client;
     };
 
     //!
@@ -643,7 +651,7 @@ namespace Nats
 
     inline Subscription *Client::subscribe(const QString &subject, const QString &queue)
     {
-        auto subscription = new Subscription;
+        auto subscription = new Subscription(this);
 
         subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &reply, const QString &subject, const Headers &headers)
         {
@@ -886,6 +894,12 @@ namespace Nats
 
         return true;
     }
+
+    inline void Subscription::unsubscribe(int max_messages)
+    {
+        m_client->unsubscribe(ssid, max_messages);
+    }
+
 }
 
 #endif // NATSCLIENT_H
