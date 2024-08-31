@@ -278,6 +278,11 @@ namespace Nats
         Request *request(const QString &subject, const Headers &headers);
         Request *request(const QString &subject, const QByteArray &message, const Headers &headers);
 
+        //!
+        //! \brief lastInfo
+        //! return latest received info from the server
+        const QJsonObject lastInfo() const;
+
     signals:
 
         //!
@@ -294,6 +299,11 @@ namespace Nats
         //! \brief disconnected
         //! signal that the client is disconnected
         void disconnected();
+
+        //!
+        //! \brief serverError
+        //! signal when there is an error message from the server
+        void serverError(const QString);
 
     public slots:
 
@@ -614,6 +624,11 @@ namespace Nats
         return m_info;
     }
 
+    inline const QJsonObject Client::lastInfo() const
+    {
+        return m_info;
+    }
+
     inline void Client::publish(const QString &subject, const QByteArray &message)
     {
         publish(subject, message, "");
@@ -852,6 +867,8 @@ namespace Nats
 
                 if(error_message.compare(QStringLiteral("Invalid Subject")) != 0)
                     m_socket.close();
+
+                emit serverError(error_message);
 
                 return false;
             }
