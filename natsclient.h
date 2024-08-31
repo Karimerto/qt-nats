@@ -373,10 +373,10 @@ namespace Nats
         QString m_inboxPrefix;
 
         //!
-        //! \brief send_info
+        //! \brief send_connect
         //! \param options
         //! send client information and options to server
-        void send_info(const Options &options);
+        void send_connect(const Options &options);
 
         //!
         //! \brief parse_info
@@ -440,7 +440,7 @@ namespace Nats
         {
             DEBUG("SSL/TLS successful");
 
-            send_info(options);
+            send_connect(options);
             set_listeners();
 
             if(callback)
@@ -492,7 +492,7 @@ namespace Nats
             }
             else
             {
-                send_info(options);
+                send_connect(options);
                 set_listeners();
 
                 if(callback)
@@ -568,7 +568,7 @@ namespace Nats
                 return false;
         }
 
-        send_info(options);
+        send_connect(options);
         set_listeners();
 
         emit connected();
@@ -576,7 +576,7 @@ namespace Nats
         return true;
     }
 
-    inline void Client::send_info(const Options &options)
+    inline void Client::send_connect(const Options &options)
     {
         QJsonObject info{
             {"verbose", options.verbose},
@@ -610,7 +610,7 @@ namespace Nats
         message += QJsonDocument(info).toJson(QJsonDocument::Compact);
         message += CRLF;
 
-        DEBUG("send info message:" << message);
+        DEBUG("send connect message:" << message);
 
         m_socket.write(message);
     }
