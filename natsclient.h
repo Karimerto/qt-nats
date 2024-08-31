@@ -21,7 +21,7 @@ namespace Nats
     typedef QMultiMap<QString, QString> Headers;
 
     //! main callback message
-    using MessageCallback = std::function<void(QByteArray &&message, QString &&inbox, QString &&subject, Headers &&headers)>;
+    using MessageCallback = std::function<void(QByteArray &&message, QString &&reply, QString &&subject, Headers &&headers)>;
     using ConnectCallback = std::function<void()>;
 
     //!
@@ -160,7 +160,7 @@ namespace Nats
 
         QString subject;
         QByteArray message;
-        QString inbox;
+        QString reply;
         Headers headers;
         uint64_t ssid = 0;
 
@@ -183,9 +183,9 @@ namespace Nats
         //! \param message
         //! \param headers
         //! publish given message with subject, optionally with headers
-        void publish(const QString &subject, const QByteArray &message, const QString &inbox);
+        void publish(const QString &subject, const QByteArray &message, const QString &reply);
         void publish(const QString &subject, const QByteArray &message = "");
-        void publish(const QString &subject, const Headers &headers, const QByteArray &message = "", const QString &inbox = "");
+        void publish(const QString &subject, const Headers &headers, const QByteArray &message = "", const QString &reply = "");
 
         //!
         //! \brief subscribe
@@ -580,16 +580,16 @@ namespace Nats
         publish(subject, message, "");
     }
 
-    inline void Client::publish(const QString &subject, const QByteArray &message, const QString &inbox)
+    inline void Client::publish(const QString &subject, const QByteArray &message, const QString &reply)
     {
-        QString body = QStringLiteral("PUB ") % subject % " " % inbox % (inbox.isEmpty() ? "" : " ") % QString::number(message.length()) % CRLF % message % CRLF;
+        QString body = QStringLiteral("PUB ") % subject % " " % reply % (reply.isEmpty() ? "" : " ") % QString::number(message.length()) % CRLF % message % CRLF;
 
         DEBUG("published:" << body);
 
         m_socket.write(body.toUtf8());
     }
 
-    inline void Client::publish(const QString &subject, const Headers &headers, const QByteArray &message, const QString &inbox)
+    inline void Client::publish(const QString &subject, const Headers &headers, const QByteArray &message, const QString &reply)
     {
         // Send either PUB or HPUB, depending on header(s)
         QString body;
@@ -599,14 +599,14 @@ namespace Nats
         if (hdr.length() > 0)
         {
             body = QStringLiteral("HPUB ") % subject % " " % \
-            inbox % (inbox.isEmpty() ? "" : " ") % \
+            reply % (reply.isEmpty() ? "" : " ") % \
             QString::number(hdr.length()) % " " % \
             QString::number(hdr.length() + message.length()) % CRLF % hdr;
         }
         else
         {
             body = QStringLiteral("PUB ") % subject % " " % \
-            inbox % (inbox.isEmpty() ? "" : " ") % \
+            reply % (reply.isEmpty() ? "" : " ") % \
             QString::number(message.length()) % CRLF;
         }
 
@@ -645,11 +645,11 @@ namespace Nats
     {
         auto subscription = new Subscription;
 
-        subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &inbox, const QString &subject, const Headers &headers)
+        subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &reply, const QString &subject, const Headers &headers)
         {
             subscription->message = message;
             subscription->subject = subject;
-            subscription->inbox = inbox;
+            subscription->reply = reply;
             subscription->headers = headers;
 
             emit subscription->received();
@@ -674,10 +674,10 @@ namespace Nats
 
     inline uint64_t Client::request(const QString subject, const QByteArray message, MessageCallback callback)
     {
-        QString inbox = QUuid::createUuid().toString();
-        uint64_t ssid = subscribe(inbox, callback);
+        QString reply = QUuid::createUuid().toString();
+        uint64_t ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
-        publish(subject, message, inbox);
+        publish(subject, message, reply);
 
         return ssid;
     }
@@ -689,10 +689,10 @@ namespace Nats
 
     inline uint64_t Client::request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback)
     {
-        QString inbox = QUuid::createUuid().toString();
-        uint64_t ssid = subscribe(inbox, callback);
+        QString reply = QUuid::createUuid().toString();
+        uint64_t ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
-        publish(subject, headers, message, inbox);
+        publish(subject, headers, message, reply);
 
         return ssid;
     }
@@ -794,7 +794,7 @@ namespace Nats
             int total_len = 0;
             int message_len = 0;
             int header_len = 0;
-            QString subject, sid, inbox;
+            QString subject, sid, reply;
 
             QList<QStringView> parts = QStringView{operation}.split(u" ", Qt::SkipEmptyParts);
 
@@ -809,7 +809,7 @@ namespace Nats
                 }
                 else if (parts.length() == 6)
                 {
-                    inbox = (parts[3]).toString();
+                    reply = (parts[3]).toString();
                     header_len = parts[4].toInt();
                     total_len = parts[5].toInt();
                 }
@@ -828,7 +828,7 @@ namespace Nats
                 }
                 else if (parts.length() == 5)
                 {
-                    inbox = (parts[3]).toString();
+                    reply = (parts[3]).toString();
                     total_len = message_len = parts[4].toInt();
                 }
                 else
@@ -873,7 +873,7 @@ namespace Nats
             if(m_callbacks.contains(ssid))
             {
                 auto callback = m_callbacks[ssid];
-                callback(std::move(message), std::move(inbox), std::move(subject), std::move(headers));
+                callback(std::move(message), std::move(reply), std::move(subject), std::move(headers));
             }
             else
             {
