@@ -181,6 +181,26 @@ namespace Nats
     };
 
     //!
+    //! \brief The Request class
+    //! holds request data and emits signal when ready as alternative to callbacks
+    class Request : public QObject
+    {
+        Q_OBJECT
+
+    public:
+        explicit Request(QObject *parent = nullptr): QObject(parent) {}
+
+        QString subject;
+        QByteArray message;
+        QString reply;
+        Headers headers;
+        uint64_t ssid = 0;
+
+    signals:
+        void received();
+    };
+
+    //!
     //! \brief The Client class
     //! main client class
     class Client : public QObject
@@ -252,6 +272,11 @@ namespace Nats
         qulonglong request(const QString subject, Nats::MessageCallback callback);
         qulonglong request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback);
         qulonglong request(const QString subject, const Headers headers, Nats::MessageCallback callback);
+
+        Request *request(const QString &subject);
+        Request *request(const QString &subject, const QByteArray &message);
+        Request *request(const QString &subject, const Headers &headers);
+        Request *request(const QString &subject, const QByteArray &message, const Headers &headers);
 
     signals:
 
@@ -716,6 +741,49 @@ namespace Nats
         publish(subject, headers, message, reply);
 
         return ssid;
+    }
+
+    inline Request *Client::request(const QString &subject)
+    {
+        return request(subject, "");
+    }
+
+    inline Request *Client::request(const QString &subject, const QByteArray &message)
+    {
+        auto req = new Request(this);
+
+        req->ssid = request(subject, message, [req](const QByteArray &message, const QString &reply, const QString &subject, const Headers &headers)
+        {
+            req->message = message;
+            req->subject = subject;
+            req->reply = reply;
+            req->headers = headers;
+
+            emit req->received();
+        });
+
+        return req;
+    }
+
+    inline Request *Client::request(const QString &subject, const Headers &headers)
+    {
+        return request(subject, "", headers);
+    }
+    inline Request *Client::request(const QString &subject, const QByteArray &message, const Headers &headers)
+    {
+        auto req = new Request(this);
+
+        req->ssid = request(subject, message, headers, [req](const QByteArray &message, const QString &reply, const QString &subject, const Headers &headers)
+        {
+            req->message = message;
+            req->subject = subject;
+            req->reply = reply;
+            req->headers = headers;
+
+            emit req->received();
+        });
+
+        return req;
     }
 
     //! TODO: disconnect handling
