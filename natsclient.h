@@ -257,8 +257,8 @@ namespace Nats
         void connected();
 
         //!
-        //! \brief connected
-        //! signal that the client is connected
+        //! \brief error
+        //! signal when there is an error connecting
         void error(const QString);
 
         //!
@@ -380,7 +380,7 @@ namespace Nats
             emit error(m_socket.errorString());
         });
 
-        QObject::connect(&m_socket, static_cast<void(QSslSocket::*)(const QList<QSslError> &)>(&QSslSocket::sslErrors),this, [this](const QList<QSslError> &errors)
+        QObject::connect(&m_socket, static_cast<void(QSslSocket::*)(const QList<QSslError> &)>(&QSslSocket::sslErrors), this, [this](const QList<QSslError> &errors)
         {
             DEBUG(errors);
 
