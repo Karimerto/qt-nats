@@ -7,11 +7,11 @@
 #include <QMultiMap>
 #include <QObject>
 #include <QProcessEnvironment>
+#include <QRandomGenerator>
 #include <QSslConfiguration>
 #include <QSslSocket>
 #include <QStringBuilder>
 #include <QTextStream>
-#include <QUuid>
 
 namespace Nats
 {
@@ -118,6 +118,17 @@ namespace Nats
         return headers;
     }
 
+    const QString digits("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+    const int digitLen = 62;
+    const int replySuffixLen = 8;
+
+    static QString makeRandom(int length) {
+        QString res(length, 0);
+        for(int i = 0; i < length; i++)
+            res[i] = digits[QRandomGenerator::global()->bounded(digitLen)];
+        return res;
+    }
+
     //!
     //! \brief The Options struct
     //! holds all client options
@@ -138,6 +149,7 @@ namespace Nats
         QString user;
         QString pass;
         QString token;
+        QString inboxPrefix;
     };
 
     class Client;
@@ -321,6 +333,11 @@ namespace Nats
         QJsonObject m_info;
 
         //!
+        //! \brief m_inboxPrefix
+        //! once-generated inbox prefix for the client
+        QString m_inboxPrefix;
+
+        //!
         //! \brief send_info
         //! \param options
         //! send client information and options to server
@@ -343,6 +360,11 @@ namespace Nats
         //! \param buffer
         //! process messages from buffer
         bool process_inbound(const QByteArray &buffer);
+
+        //!
+        //! \brief newInbox
+        //! generate a new inbox name
+        const QString newInbox();
     };
 
     inline Client::Client(QObject *parent) : QObject(parent)
@@ -673,7 +695,7 @@ namespace Nats
 
     inline qulonglong Client::request(const QString subject, const QByteArray message, MessageCallback callback)
     {
-        QString reply = QUuid::createUuid().toString();
+        QString reply = newInbox();
         qulonglong ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
         publish(subject, message, reply);
@@ -688,7 +710,7 @@ namespace Nats
 
     inline qulonglong Client::request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback)
     {
-        QString reply = QUuid::createUuid().toString();
+        QString reply = newInbox();
         qulonglong ssid = subscribe(reply, callback);
         unsubscribe(ssid, 1);
         publish(subject, headers, message, reply);
@@ -886,11 +908,27 @@ namespace Nats
         return true;
     }
 
+    inline const QString Client::newInbox()
+    {
+        if(m_inboxPrefix.isEmpty())
+        {
+            QString prefix;
+            if(!m_options.inboxPrefix.isEmpty())
+                prefix = m_options.inboxPrefix;
+            else
+                prefix = QStringLiteral("_INBOX.");
+            prefix += makeRandom(22);
+            prefix += ".";
+            m_inboxPrefix = prefix;
+        }
+
+        return m_inboxPrefix + makeRandom(8);
+    }
+
     inline void Subscription::unsubscribe(int max_messages)
     {
         m_client->unsubscribe(ssid, max_messages);
     }
-
 }
 
 #endif // NATSCLIENT_H
