@@ -4,20 +4,127 @@
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMultiMap>
 #include <QObject>
 #include <QProcessEnvironment>
 #include <QSslConfiguration>
 #include <QSslSocket>
 #include <QStringBuilder>
+#include <QTextStream>
 #include <QUuid>
 
 namespace Nats
 {
     #define DEBUG(x) do { if (_debug_mode) { qDebug() << x; } } while (0)
 
+    //! Header type
+    typedef QMultiMap<QString, QString> Headers;
+
     //! main callback message
-    using MessageCallback = std::function<void(QByteArray &&message, QString &&inbox, QString &&subject)>;
+    using MessageCallback = std::function<void(QByteArray &&message, QString &&inbox, QString &&subject, Headers &&headers)>;
     using ConnectCallback = std::function<void()>;
+
+    //!
+    //! \brief CRLF
+    //! NATS protocol separator
+    const QByteArray CRLF = "\r\n";
+
+    //!
+    //! \brief hdrLine
+    //! NATS headers indicator
+    const QByteArray hdrLine = "NATS/1.0\r\n";
+
+    const int hdrPreEnd = hdrLine.length() - CRLF.length();
+    const QString statusHdr("Status");
+    const QString descrHdr("Description");
+    const QString noResponders("503");
+    const QString noMessagesSts("404");
+    const QString reqTimeoutSts("408");
+    const QString jetStream409Sts("409");
+    const QString controlMsg("100");
+    const int statusLen = 3;
+
+    //! convert QMultiMap headers into a suitable QByteArray
+    static const QByteArray makeHeader(const Headers &headers)
+    {
+        if(headers.size() == 0)
+        {
+            return QByteArray();
+        }
+
+        // Start with the header line
+        QByteArray result(hdrLine);
+
+        // Append values
+        QMapIterator<QString, QString> i(headers);
+        while(i.hasNext())
+        {
+            i.next();
+            // It might be a good idea to check the headers are valid, but
+            // for now, leave it up to the user
+            result += i.key().toUtf8() + ": " + i.value().toUtf8() + CRLF;
+        }
+
+        // Add a final CRLF
+        result += CRLF;
+
+        return result;
+    }
+
+    //! convert QByteArray headers back into a QMultiMap
+    static const Headers parseHeader(const QByteArray &hdr)
+    {
+        QTextStream str(hdr);
+        QString firstline = str.readLine();
+        if(firstline.length() < hdrPreEnd || hdrLine.left(hdrPreEnd) != firstline.left(hdrPreEnd))
+        {
+            qCritical() <<  "invalid header" << firstline;
+            return Headers();
+        }
+
+        Headers headers;
+        QString line;
+        while(str.readLineInto(&line))
+        {
+            int idx = line.indexOf(':');
+            // If there is no colon, skip this line
+            if(idx < 1)
+            {
+                continue;
+            }
+
+            // Parse key and value
+            QString key(line.left(idx));
+            idx++;
+            QString value(line.mid(idx).trimmed());
+
+            // Skip empty values as well
+            if(value.isEmpty())
+            {
+                continue;
+            }
+            headers.insert(key, value);
+        }
+
+        // Parse inline status, if any
+        if(firstline.length() > hdrPreEnd)
+        {
+            QString description;
+            QString status = firstline.mid(hdrPreEnd).trimmed();
+            if(status.length() != statusLen)
+            {
+                description = status.mid(statusLen).trimmed();
+                status = status.left(statusLen);
+            }
+            headers.insert(statusHdr, status);
+            if(!description.isEmpty())
+            {
+                headers.insert(descrHdr, description);
+            }
+        }
+
+        return headers;
+    }
 
     //!
     //! \brief The Options struct
@@ -26,6 +133,7 @@ namespace Nats
     {
         bool verbose = false;
         bool pedantic = false;
+        bool headers = true;
         bool tls_required = false;
         bool ssl = false;
         bool ssl_verify = true;
@@ -53,10 +161,10 @@ namespace Nats
         QString subject;
         QByteArray message;
         QString inbox;
+        Headers headers;
         uint64_t ssid = 0;
 
     signals:
-
         void received();
     };
 
@@ -73,9 +181,11 @@ namespace Nats
         //! \brief publish
         //! \param subject
         //! \param message
-        //! publish given message with subject
+        //! \param headers
+        //! publish given message with subject, optionally with headers
         void publish(const QString &subject, const QByteArray &message, const QString &inbox);
         void publish(const QString &subject, const QByteArray &message = "");
+        void publish(const QString &subject, const Headers &headers, const QByteArray &message = "", const QString &inbox = "");
 
         //!
         //! \brief subscribe
@@ -128,6 +238,8 @@ namespace Nats
         //! make request using given subject and optional message
         uint64_t request(const QString subject, const QByteArray message, Nats::MessageCallback callback);
         uint64_t request(const QString subject, Nats::MessageCallback callback);
+        uint64_t request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback);
+        uint64_t request(const QString subject, const Headers headers, Nats::MessageCallback callback);
 
     signals:
 
@@ -179,11 +291,6 @@ namespace Nats
         bool _debug_mode = false;
 
         //!
-        //! \brief CLRF
-        //! NATS protocol separator
-        const QByteArray CLRF = "\r\n";
-
-        //!
         //! \brief m_buffer
         //! main buffer that holds data from server
         QByteArray m_buffer;
@@ -207,6 +314,11 @@ namespace Nats
         //! \brief m_callbacks
         //! subscription callbacks
         QHash<uint64_t, MessageCallback> m_callbacks;
+
+        //!
+        //! \brief m_info
+        //! latest received info message
+        QJsonObject m_info;
 
         //!
         //! \brief send_info
@@ -409,21 +521,49 @@ namespace Nats
 
     inline void Client::send_info(const Options &options)
     {
-        QString message =
-                QString("CONNECT {")
-                % "\"verbose\":" % (options.verbose ? "true" : "false") % ","
-                % "\"pedantic\":" % (options.pedantic ? "true" : "false") % ","
-                % "\"ssl_required\":" % (options.ssl_required ? "true" : "false") % ","
-                % "\"name\":" % "\"" % options.name % "\","
-                % "\"lang\":" % "\"" %options.lang % "\","
-                % "\"user\":" % "\"" % options.user % "\","
-                % "\"pass\":" % "\"" % options.pass % "\","
-                % "\"auth_token\":" % "\"" % options.token % "\""
-                % "} " % CLRF;
+        QJsonObject info{
+            {"verbose", options.verbose},
+            {"pedantic", options.pedantic},
+            {"headers", options.headers},
+            {"tls_required", options.tls_required},
+            {"name", options.name},
+            {"lang", options.lang},
+            {"version", options.version},
+            {"protocol", 1},
+        };
+
+        // Set username, if any
+        if (!options.user.isEmpty())
+        {
+            info.insert("user", options.user);
+        }
+
+        // Set password, if any
+        if (!options.user.isEmpty())
+        {
+            info.insert("user", options.user);
+        }
+
+        // Set authorization token, if any
+        if (!options.user.isEmpty())
+        {
+            info.insert("auth_token", options.token);
+        }
+
+        // If headers are enabled, also set no_responders
+        if (options.headers)
+        {
+            info.insert("no_responders", true);
+        }
+
+        // Compose CONNECT message
+        QByteArray message("CONNECT ");
+        message += QJsonDocument(info).toJson(QJsonDocument::Compact);
+        message += CRLF;
 
         DEBUG("send info message:" << message);
 
-        m_socket.write(message.toUtf8());
+        m_socket.write(message);
     }
 
     inline QJsonObject Client::parse_info(const QByteArray &message)
@@ -431,7 +571,8 @@ namespace Nats
         DEBUG(message);
 
         // discard 'INFO '
-        return QJsonDocument::fromJson(message.mid(5)).object();
+        m_info = QJsonDocument::fromJson(message.mid(5)).object();
+        return m_info;
     }
 
     inline void Client::publish(const QString &subject, const QByteArray &message)
@@ -441,7 +582,36 @@ namespace Nats
 
     inline void Client::publish(const QString &subject, const QByteArray &message, const QString &inbox)
     {
-        QString body = QStringLiteral("PUB ") % subject % " " % inbox % (inbox.isEmpty() ? "" : " ") % QString::number(message.length()) % CLRF % message % CLRF;
+        QString body = QStringLiteral("PUB ") % subject % " " % inbox % (inbox.isEmpty() ? "" : " ") % QString::number(message.length()) % CRLF % message % CRLF;
+
+        DEBUG("published:" << body);
+
+        m_socket.write(body.toUtf8());
+    }
+
+    inline void Client::publish(const QString &subject, const Headers &headers, const QByteArray &message, const QString &inbox)
+    {
+        // Send either PUB or HPUB, depending on header(s)
+        QString body;
+
+        // Convert headers to string
+        QByteArray hdr = makeHeader(headers);
+        if (hdr.length() > 0)
+        {
+            body = QStringLiteral("HPUB ") % subject % " " % \
+            inbox % (inbox.isEmpty() ? "" : " ") % \
+            QString::number(hdr.length()) % " " % \
+            QString::number(hdr.length() + message.length()) % CRLF % hdr;
+        }
+        else
+        {
+            body = QStringLiteral("PUB ") % subject % " " % \
+            inbox % (inbox.isEmpty() ? "" : " ") % \
+            QString::number(message.length()) % CRLF;
+        }
+
+        // Append message
+        body += message % CRLF;
 
         DEBUG("published:" << body);
 
@@ -457,7 +627,7 @@ namespace Nats
     {
         m_callbacks[++m_ssid] = callback;
 
-        QString message = QStringLiteral("SUB ") % subject % " " % queue % (queue.isEmpty() ? "" : " ") % QString::number(m_ssid) % CLRF;
+        QString message = QStringLiteral("SUB ") % subject % " " % queue % (queue.isEmpty() ? "" : " ") % QString::number(m_ssid) % CRLF;
 
         m_socket.write(message.toUtf8());
 
@@ -475,11 +645,12 @@ namespace Nats
     {
         auto subscription = new Subscription;
 
-        subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &inbox, const QString &subject)
+        subscription->ssid = subscribe(subject, queue, [subscription](const QByteArray &message, const QString &inbox, const QString &subject, const Headers &headers)
         {
             subscription->message = message;
             subscription->subject = subject;
             subscription->inbox = inbox;
+            subscription->headers = headers;
 
             emit subscription->received();
         });
@@ -489,7 +660,7 @@ namespace Nats
 
     inline void Client::unsubscribe(uint64_t ssid, int max_messages)
     {
-        QString message = QStringLiteral("UNSUB ") % QString::number(ssid) % (max_messages > 0 ? QString(" %1").arg(max_messages) : "") % CLRF;
+        QString message = QStringLiteral("UNSUB ") % QString::number(ssid) % (max_messages > 0 ? QString(" %1").arg(max_messages) : "") % CRLF;
 
         DEBUG("unsubscribed:" << message);
 
@@ -511,21 +682,35 @@ namespace Nats
         return ssid;
     }
 
+    inline uint64_t Client::request(const QString subject, const Headers headers, Nats::MessageCallback callback)
+    {
+        return request(subject, "", headers, callback);
+    }
+
+    inline uint64_t Client::request(const QString subject, const QByteArray message, const Headers headers, Nats::MessageCallback callback)
+    {
+        QString inbox = QUuid::createUuid().toString();
+        uint64_t ssid = subscribe(inbox, callback);
+        unsubscribe(ssid, 1);
+        publish(subject, headers, message, inbox);
+
+        return ssid;
+    }
+
     //! TODO: disconnect handling
     inline void Client::set_listeners()
     {
         DEBUG("set listeners");
         QObject::connect(&m_socket, &QSslSocket::readyRead, this, [this]
         {
-
             // add new data to buffer
             m_buffer +=  m_socket.readAll();
 
             // process message if exists
-            int clrf_pos = m_buffer.lastIndexOf(CLRF);
-            if(clrf_pos != -1)
+            int CRLF_pos = m_buffer.lastIndexOf(CRLF);
+            if(CRLF_pos != -1)
             {
-                QByteArray msg_buffer = m_buffer.left(clrf_pos + CLRF.length());
+                QByteArray msg_buffer = m_buffer.left(CRLF_pos + CRLF.length());
                 process_inbound(msg_buffer);
             }
         });
@@ -540,14 +725,15 @@ namespace Nats
 
         // track movement inside buffer for parsing
         int last_pos = 0, current_pos = 0;
+        bool is_hmsg;
 
         while(last_pos != buffer.length())
         {
             // we always get delimited message
-            current_pos = buffer.indexOf(CLRF, last_pos);
+            current_pos = buffer.indexOf(CRLF, last_pos);
             if(current_pos == -1)
             {
-                qCritical() << "CLRF not found, this should not happen";
+                qCritical() << "CRLF not found, this should not happen";
                 break;
             }
 
@@ -557,15 +743,15 @@ namespace Nats
             if(operation.compare(QStringLiteral("PING"), Qt::CaseInsensitive) == 0)
             {
                 DEBUG("sending pong");
-                m_socket.write(QString("PONG" % CLRF).toUtf8());
-                last_pos = current_pos + CLRF.length();
+                m_socket.write(QString("PONG" % CRLF).toUtf8());
+                last_pos = current_pos + CRLF.length();
                 continue;
             }
             // +OK operation
             else if(operation.compare(QStringLiteral("+OK"), Qt::CaseInsensitive) == 0)
             {
                 DEBUG("+OK");
-                last_pos = current_pos + CLRF.length();
+                last_pos = current_pos + CRLF.length();
                 continue;
             }
             // if -ERR, close client connection | -ERR <error message>
@@ -580,43 +766,79 @@ namespace Nats
 
                 return false;
             }
-            // only MSG should be now left
-            else if(operation.indexOf(QStringLiteral("MSG"), Qt::CaseInsensitive) != 0)
+            // MSG operation
+            else if(operation.indexOf(QStringLiteral("MSG"), Qt::CaseInsensitive) == 0)
+            {
+                is_hmsg = false;
+            }
+            // HMSG operation
+            else if(operation.indexOf(QStringLiteral("HMSG"), Qt::CaseInsensitive) == 0)
+            {
+                is_hmsg = true;
+            }
+            else
             {
                 qCritical() << "invalid message - no message left";
 
-                m_buffer.remove(0,current_pos + CLRF.length());
+                m_buffer.remove(0,current_pos + CRLF.length());
                 return false;
             }
 
-            // extract MSG data
+            // extract MSG or HMSG data
             // MSG format is: 'MSG <subject> <sid> [reply-to] <#bytes>\r\n[payload]\r\n'
-            // extract message_len = bytes and check if there is a message in this buffer
+            // HMSG format is: 'HMSG <subject> <sid> [reply-to] <#header bytes> <#total bytes>\r\n[headers]\r\n\r\n[payload]\r\n'
+
+            // extract total_len = bytes and check if there is a message in this buffer
             // if not, wait for next call, otherwise, extract all data
 
+            int total_len = 0;
             int message_len = 0;
+            int header_len = 0;
             QString subject, sid, inbox;
 
             QList<QStringView> parts = QStringView{operation}.split(u" ", Qt::SkipEmptyParts);
 
-            current_pos += CLRF.length();
+            current_pos += CRLF.length();
 
-            if(parts.length() == 4)
+            if(is_hmsg)
             {
-                message_len = parts[3].toInt();
-            }
-            else if (parts.length() == 5)
-            {
-                inbox = (parts[3]).toString();
-                message_len = parts[4].toInt();
+                if(parts.length() == 5)
+                {
+                    header_len = parts[3].toInt();
+                    total_len = parts[4].toInt();
+                }
+                else if (parts.length() == 6)
+                {
+                    inbox = (parts[3]).toString();
+                    header_len = parts[4].toInt();
+                    total_len = parts[5].toInt();
+                }
+                else
+                {
+                    qCritical() <<  "invalid message - wrong length" << parts.length();
+                    break;
+                }
+                message_len = total_len - header_len;
             }
             else
             {
-                qCritical() <<  "invalid message - wrong length" << parts.length();
-                break;
+                if(parts.length() == 4)
+                {
+                    total_len = message_len = parts[3].toInt();
+                }
+                else if (parts.length() == 5)
+                {
+                    inbox = (parts[3]).toString();
+                    total_len = message_len = parts[4].toInt();
+                }
+                else
+                {
+                    qCritical() <<  "invalid message - wrong length" << parts.length();
+                    break;
+                }
             }
 
-            if(current_pos + message_len + CLRF.length() > buffer.length())
+            if(current_pos + total_len + CRLF.length() > buffer.length())
             {
                 DEBUG("message not in buffer, waiting");
                 break;
@@ -626,9 +848,24 @@ namespace Nats
             subject = parts[1].toString();
             sid = parts[2].toString();
             uint64_t ssid = sid.toULong();
+            QByteArray message;
+            Headers headers;
 
-            QByteArray message(buffer.mid(current_pos, message_len));
-            last_pos = current_pos + message_len + CLRF.length();
+            // Extract headers, if any
+            QByteArray hdr;
+            if(is_hmsg)
+            {
+                hdr = buffer.mid(current_pos, header_len);
+                message = buffer.mid(current_pos + header_len, message_len);
+                headers = parseHeader(hdr);
+            }
+            else
+            {
+                message = buffer.mid(current_pos, message_len);
+            }
+
+            // Update last position
+            last_pos = current_pos + total_len + CRLF.length();
 
             DEBUG("message:" << message);
 
@@ -636,7 +873,7 @@ namespace Nats
             if(m_callbacks.contains(ssid))
             {
                 auto callback = m_callbacks[ssid];
-                callback(std::move(message), std::move(inbox), std::move(subject));
+                callback(std::move(message), std::move(inbox), std::move(subject), std::move(headers));
             }
             else
             {
@@ -652,4 +889,3 @@ namespace Nats
 }
 
 #endif // NATSCLIENT_H
-
